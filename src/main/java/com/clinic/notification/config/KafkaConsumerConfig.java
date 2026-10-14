@@ -1,0 +1,67 @@
+package com.clinic.notification.config;
+
+import com.clinic.notification.event.EventParser;
+import com.clinic.notification.event.InvalidEventException;
+import com.clinic.notification.service.NotificationService;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.ConsumerRecordRecoverer;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
+
+@Slf4j
+@Configuration
+public class KafkaConsumerConfig {
+
+    @Bean
+    public NewTopic deadLetterTopic(@Value("${notification.topic.booked:appointment.booked}") String topic) {
+        return TopicBuilder.name(topic + ".dlt").partitions(1).replicas(1).build();
+    }
+
+    /**
+     * Retry policy: the first attempt plus maxRetries more (1s, 2s, 4s by default), then the record is
+     * published to <topic>.dlt. Unreadable events skip the retries and go straight to the DLT.
+     * If publishing to the DLT itself fails, the record is NOT committed and is delivered again,
+     * so an event is never dropped.
+     */
+    @Bean
+    public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<Object, Object> template,
+                                                 NotificationService notificationService,
+                                                 EventParser parser,
+                                                 @Value("${notification.retry.max-retries:3}") int maxRetries,
+                                                 @Value("${notification.retry.initial-interval-ms:1000}") long initialIntervalMs) {
+
+        DeadLetterPublishingRecoverer deadLetterPublisher = new DeadLetterPublishingRecoverer(
+                template, (record, ex) -> new TopicPartition(record.topic() + ".dlt", -1));
+
+        ConsumerRecordRecoverer recoverer = (record, ex) -> {
+            String reason = String.valueOf(NestedExceptionUtils.getMostSpecificCause(ex).getMessage());
+            try {
+                var event = parser.parse((String) record.value());
+                notificationService.markDeadLettered(event.eventId(), reason);
+            } catch (Exception ignored) {
+                // unreadable event: nothing stored to update, it still goes to the DLT below
+            }
+            log.error("Giving up on record {}-{}@{}: {} -> dead-letter topic",
+                    record.topic(), record.partition(), record.offset(), reason);
+            deadLetterPublisher.accept(record, ex);
+        };
+
+        ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(maxRetries);
+        backOff.setInitialInterval(initialIntervalMs);
+        backOff.setMultiplier(2.0);
+        backOff.setMaxInterval(10_000);
+
+        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
+        handler.addNotRetryableExceptions(InvalidEventException.class);
+        return handler;
+    }
+}

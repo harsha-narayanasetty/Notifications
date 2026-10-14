@@ -1,0 +1,39 @@
+server:
+  port: 8081                         # appointment-service uses 8081
+
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/notifications
+    username: ${DB_USERNAME:harshanarayanasetty}
+    password: ${DB_PASSWORD:password}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 1
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: notification-service
+      auto-offset-reset: earliest    # a brand-new consumer group reads from the beginning
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:                        # only used to publish to the dead-letter topic
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+notification:
+  topic:
+    booked: appointment.booked
+  sender:
+    failure-rate: 0.3                # the stub fails ~30% of the time
+  retry:
+    max-retries: 3                   # 1 attempt + 3 retries, then dead-letter
+    initial-interval-ms: 1000
