@@ -97,5 +97,5 @@ Each entry: what was decided, an alternative rejected, and what would change my 
   secrets management and an external DB.
 - **Not verified:** Docker is not installed in my environment, so the compose file has not been run.
   The appointment-service is not part of it because its image and source were not available to me.
-- **Known weaknesses:** the default DB password is `password`, and the Kafka listener on the host port is
+- **Known weaknesses:** the DB credentials must be supplied via `DB_USERNAME` / `DB_PASSWORD`, and the Kafka listener on the host port is
   plaintext.

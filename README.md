@@ -35,13 +35,13 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-producer.sh \
 {"eventId":"11111111-1111-1111-1111-111111111111","eventType":"AppointmentBooked","occurredAt":"2026-11-01T08:00:00Z","appointmentId":1,"patientId":101,"doctorId":201,"startTime":"2026-11-02T10:00:00"}
 ```
 
-Optional `.env` overrides: `DB_USERNAME` (default `notifications`), `DB_PASSWORD` (default `password`).
+Credentials come from the environment (copy `.env.example` to `.env`; `.env` is git-ignored).
 Kafka is also reachable from the host at `localhost:29092`.
 
 ### Locally with Gradle
 
 Requires JDK 21, a PostgreSQL database `notifications` on `localhost:5432` and Kafka on `localhost:9092`
-(see `src/main/resources/application.yaml`; credentials via `DB_USERNAME` / `DB_PASSWORD`).
+(see `src/main/resources/application.yaml`; required env vars `DB_USERNAME` / `DB_PASSWORD`; optional `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`).
 
 ```
 ./gradlew bootRun
@@ -82,9 +82,8 @@ integration tests for idempotency, retry or the endpoint yet.
 - No real delivery channel (email/SMS); the sender is a stub and the message is a fixed English string.
 - No recipient lookup: events carry only patient and doctor IDs.
 - Nothing consumes or replays the dead-letter topic.
-- The HTTP endpoint has no application-level authentication (dev use only; do not expose it). Note that
-  `spring-boot-starter-security` is on the classpath with no config, so Spring Security's defaults apply and
-  unauthenticated requests currently get `401`, so the `curl` examples above fail until a security config permits `/notifications`.
+- The HTTP endpoint has no authentication (dev use only; do not expose it). `SecurityConfiguration` permits
+  `/notifications` and denies every other path.
 - Almost no automated tests (only a context-load test); idempotency, retry and dead-letter behaviour are untested.
 - `docker-compose.yml` has not been run (Docker was unavailable where it was written).
 - The appointment-service that produces the events is not part of this repository or the compose file.
