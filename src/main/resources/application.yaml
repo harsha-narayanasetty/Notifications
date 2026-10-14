@@ -1,5 +1,5 @@
 server:
-  port: 8081                         # appointment-service uses 8081
+  port: 8081                         # standalone default; appointment-service uses 8080
 
 spring:
   application:
@@ -24,8 +24,12 @@ spring:
       auto-offset-reset: earliest    # a brand-new consumer group reads from the beginning
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-    producer:                        # only used to publish to the dead-letter topic
+    producer:
       acks: all
+      properties:
+        max.block.ms: 3000
+        request.timeout.ms: 3000
+        delivery.timeout.ms: 6000     # only used to publish to the dead-letter topic
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 

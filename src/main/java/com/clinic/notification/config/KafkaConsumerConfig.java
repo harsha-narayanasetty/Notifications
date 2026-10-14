@@ -42,6 +42,10 @@ public class KafkaConsumerConfig {
         DeadLetterPublishingRecoverer deadLetterPublisher = new DeadLetterPublishingRecoverer(
                 template, (record, ex) -> new TopicPartition(record.topic() + ".dlt", -1));
 
+        // Forces the consumer to wait for the broker to acknowledge the DLT write.
+        // If the broker times out or fails, this throws an exception and stops the offset commit.
+        deadLetterPublisher.setFailIfSendResultIsError(true);
+
         ConsumerRecordRecoverer recoverer = (record, ex) -> {
             String reason = String.valueOf(NestedExceptionUtils.getMostSpecificCause(ex).getMessage());
             try {
