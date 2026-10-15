@@ -149,4 +149,33 @@ class NotificationProcessorTest {
         assertThatThrownBy(() -> processor.process(event)).isInstanceOf(NoSuchElementException.class);
         verifyNoInteractions(sender);
     }
+
+    @Test
+    @DisplayName("Given the sender throws an unexpected runtime error, when processed, then it is recorded too and rethrown")
+    void process_unexpectedSenderError_isRecordedAndRethrown() {
+        // given
+        AppointmentBookedEvent event = event();
+        Notification n = notification(1L, NotificationStatus.PENDING);
+        when(service.recordIfAbsent(event)).thenReturn(n);
+        doThrow(new IllegalStateException("provider timeout")).when(sender).send(n);
+
+        // when / then
+        assertThatThrownBy(() -> processor.process(event)).isInstanceOf(IllegalStateException.class);
+        verify(service).recordFailure(1L, "provider timeout");
+        verify(service, never()).markSent(1L);
+    }
+
+    @Test
+    @DisplayName("Given a sender error without a message, when processed, then the exception text is recorded")
+    void process_senderErrorWithoutMessage_recordsTheExceptionText() {
+        // given
+        AppointmentBookedEvent event = event();
+        Notification n = notification(1L, NotificationStatus.PENDING);
+        when(service.recordIfAbsent(event)).thenReturn(n);
+        doThrow(new NullPointerException()).when(sender).send(n);
+
+        // when / then
+        assertThatThrownBy(() -> processor.process(event)).isInstanceOf(NullPointerException.class);
+        verify(service).recordFailure(1L, "java.lang.NullPointerException");
+    }
 }

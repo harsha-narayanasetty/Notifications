@@ -4,7 +4,6 @@ import com.clinic.notification.event.AppointmentBookedEvent;
 import com.clinic.notification.model.Notification;
 import com.clinic.notification.model.NotificationStatus;
 import com.clinic.notification.sender.NotificationSender;
-import com.clinic.notification.sender.SendFailedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -41,8 +40,9 @@ public class NotificationProcessor {
 
         try {
             sender.send(notification);
-        } catch (SendFailedException e) {
-            notificationService.recordFailure(notification.getId(), e.getMessage());
+        } catch (RuntimeException e) {
+            // Any sender failure is recorded, not only SendFailedException (e.g. a timeout from a real provider SDK).
+            notificationService.recordFailure(notification.getId(), e.getMessage() != null ? e.getMessage() : e.toString());
             throw e; // let the error handler retry / dead-letter
         }
         notificationService.markSent(notification.getId());

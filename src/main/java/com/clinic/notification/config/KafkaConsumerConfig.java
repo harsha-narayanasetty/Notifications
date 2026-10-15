@@ -2,10 +2,14 @@ package com.clinic.notification.config;
 
 import com.clinic.notification.event.EventParser;
 import com.clinic.notification.event.InvalidEventException;
+import com.clinic.notification.sender.PermanentSendException;
 import com.clinic.notification.service.NotificationService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.InvalidTopicException;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,8 +33,10 @@ public class KafkaConsumerConfig {
     /**
      * Retry policy: the first attempt plus maxRetries more (1s, 2s, 4s by default), then the record is
      * published to <topic>.dlt. Unreadable events skip the retries and go straight to the DLT.
-     * If publishing to the DLT itself fails, the record is NOT committed and is delivered again,
-     * so an event is never dropped.
+     * Permanent send failures (PermanentSendException) also skip the retries.
+     * If publishing to the DLT fails temporarily, the record is NOT committed and is delivered again,
+     * so an event is never dropped. If it fails permanently (record too large, bad topic), retrying would
+     * block the partition forever, so the full record is logged at ERROR and the offset moves on.
      */
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<Object, Object> template,
@@ -56,7 +62,17 @@ public class KafkaConsumerConfig {
             }
             log.error("Giving up on record {}-{}@{}: {} -> dead-letter topic",
                     record.topic(), record.partition(), record.offset(), reason);
-            deadLetterPublisher.accept(record, ex);
+            try {
+                deadLetterPublisher.accept(record, ex);
+            } catch (RuntimeException publishFailure) {
+                if (!isPermanentPublishFailure(publishFailure)) {
+                    throw publishFailure;
+                }
+                log.error("Dead-letter publish can never succeed ({}). Skipping the record so the partition is not "
+                                + "blocked. Record to recover by hand: {}-{}@{} key={} value={}",
+                        publishFailure.toString(), record.topic(), record.partition(), record.offset(),
+                        record.key(), record.value());
+            }
         };
 
         ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(maxRetries);
@@ -65,7 +81,18 @@ public class KafkaConsumerConfig {
         backOff.setMaxInterval(10_000);
 
         DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
-        handler.addNotRetryableExceptions(InvalidEventException.class);
+        handler.addNotRetryableExceptions(InvalidEventException.class, PermanentSendException.class);
         return handler;
+    }
+
+    static boolean isPermanentPublishFailure(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof RecordTooLargeException
+                    || t instanceof SerializationException
+                    || t instanceof InvalidTopicException) {
+                return true;
+            }
+        }
+        return false;
     }
 }

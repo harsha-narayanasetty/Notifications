@@ -82,6 +82,8 @@ integration tests for idempotency, retry or the endpoint yet.
 - No real delivery channel (email/SMS); the sender is a stub and the message is a fixed English string.
 - No recipient lookup: events carry only patient and doctor IDs.
 - Nothing consumes or replays the dead-letter topic.
+- A database outage longer than ~7s dead-letters healthy events (database errors are not yet treated as infrastructure failures).
+- No metrics or alerts (DLT volume, skipped DLT writes, consumer lag).
 - The HTTP endpoint has no authentication (dev use only; do not expose it). `SecurityConfiguration` permits
   `/notifications` and denies every other path.
 - Almost no automated tests (only a context-load test); idempotency, retry and dead-letter behaviour are untested.

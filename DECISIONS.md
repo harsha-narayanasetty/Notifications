@@ -51,9 +51,17 @@ Each entry: what was decided, an alternative rejected, and what would change my 
   nothing is dropped.
 - **Rejected:** infinite retry (one poison message blocks the partition); non-blocking retry topics (more
   moving parts than this volume justifies); dropping bad events with a log line (silent data loss).
+- **Permanent send errors** (`PermanentSendException`) skip the retries. Any exception from the sender is recorded in `attempts` / `last_error`,
+  not only `SendFailedException`.
+- **Permanent DLT write failure** (record too large, serialization, invalid topic): the full record is logged at ERROR and the offset moves on,
+  because retrying forever would block the partition. Temporary DLT failures still redeliver. The log line is the only copy, so this is the one
+  data-loss path.
+- **Known gaps, not implemented:** (1) a database outage longer than ~7s dead-letters healthy events, and a failure in `markDeadLettered` is swallowed,
+  leaving the row `PENDING`; (2) no metrics or alerts on DLT volume, skipped DLT writes or consumer lag; (3) no replay tool and default 7-day DLT
+  retention; (4) listener concurrency is 1, and there is no `eventType` check.
 - **Change my mind if:** retries cause head-of-line blocking at higher throughput. Then move to retry topics.
 - **Not specified in the brief:** retry count and intervals. I picked these defaults; they are configurable.
-- **Not handled:** nothing reads the DLT or replays from it. Operations would do that by hand.
+- **Not handled:** nothing reads the DLT or replays from it. Operations would do that by hand (see known gaps above).
 
 ### D6. Postgres + Flyway, `ddl-auto: validate`
 - **Decided:** schema is owned by versioned migrations; Hibernate only validates.

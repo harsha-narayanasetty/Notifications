@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -78,5 +79,74 @@ class KafkaConsumerConfigTest {
         // then
         verify(notificationService).markDeadLettered(org.mockito.ArgumentMatchers.eq(eventId), anyString());
         verify(template).send(any(org.apache.kafka.clients.producer.ProducerRecord.class));
+    }
+
+    @Test
+    void permanentSendFailure_goesStraightToTheDeadLetterTopicWithoutRetries() {
+        // given
+        var record = new ConsumerRecord<Object, Object>("appointment.booked", 0, 1L, "7", "{}");
+        when(parser.parse("{}")).thenThrow(new InvalidEventException("x"));
+
+        // when
+        boolean handled = handler.handleOne(new com.clinic.notification.sender.PermanentSendException("bad number"),
+                record, mock(Consumer.class), mock(MessageListenerContainer.class));
+
+        // then
+        assertThat(handled).isTrue();
+        verify(template).send(any(org.apache.kafka.clients.producer.ProducerRecord.class));
+    }
+
+    @Test
+    void ordinaryFailure_isRetriedBeforeBeingDeadLettered() {
+        // given
+        var record = new ConsumerRecord<Object, Object>("appointment.booked", 0, 1L, "7", "{}");
+
+        // when
+        boolean firstAttempt = handler.handleOne(new IllegalStateException("boom"), record,
+                mock(Consumer.class), mock(MessageListenerContainer.class));
+
+        // then
+        assertThat(firstAttempt).as("first failure is retried, not recovered").isFalse();
+        verify(template, never()).send(any(org.apache.kafka.clients.producer.ProducerRecord.class));
+    }
+
+    @Test
+    void permanentDeadLetterPublishFailure_isSkippedSoThePartitionIsNotBlocked() {
+        // given
+        var record = new ConsumerRecord<Object, Object>("appointment.booked", 0, 1L, "7", "garbage");
+        when(parser.parse("garbage")).thenThrow(new InvalidEventException("x"));
+        when(template.send(any(org.apache.kafka.clients.producer.ProducerRecord.class))).thenReturn(
+                java.util.concurrent.CompletableFuture.failedFuture(
+                        new org.apache.kafka.common.errors.RecordTooLargeException("too big")));
+
+        // when
+        boolean handled = handler.handleOne(new InvalidEventException("x"), record,
+                mock(Consumer.class), mock(MessageListenerContainer.class));
+
+        // then
+        assertThat(handled).isTrue();
+    }
+
+    @Test
+    void temporaryDeadLetterPublishFailure_isRedeliveredNotSkipped() {
+        // given
+        var record = new ConsumerRecord<Object, Object>("appointment.booked", 0, 1L, "7", "garbage");
+        when(parser.parse("garbage")).thenThrow(new InvalidEventException("x"));
+        when(template.send(any(org.apache.kafka.clients.producer.ProducerRecord.class))).thenReturn(
+                java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("broker down")));
+
+        // when
+        boolean handled = handler.handleOne(new InvalidEventException("x"), record,
+                mock(Consumer.class), mock(MessageListenerContainer.class));
+
+        // then
+        assertThat(handled).isFalse();
+    }
+
+    @Test
+    void permanentPublishFailure_isDetectedThroughWrappedCauses() {
+        assertThat(KafkaConsumerConfig.isPermanentPublishFailure(new RuntimeException(
+                new org.apache.kafka.common.errors.RecordTooLargeException("big")))).isTrue();
+        assertThat(KafkaConsumerConfig.isPermanentPublishFailure(new IllegalStateException("down"))).isFalse();
     }
 }
